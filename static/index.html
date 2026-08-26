@@ -2,11 +2,13 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>GSI Notes</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
 <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/diff@5.2.0/dist/diff.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/wunderbaum@0/dist/wunderbaum.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/wunderbaum@0/dist/wunderbaum.umd.min.js"></script>
@@ -100,11 +102,76 @@
   #chat-log .assistant pre { background:#1a1a1a; padding:6px; border-radius:4px; overflow-x:auto; }
   #chat-log .assistant pre code { background:none; padding:0; }
   #chat-log .assistant em { font-style:italic; color:#aaa; }
+  .diff-box { border:1px solid var(--border); border-radius:5px; margin:6px 0; overflow:hidden; }
+  .diff-head { background:#2f2f30; padding:4px 8px; font-size:11px; color:#bbb; display:flex; justify-content:space-between; gap:8px; }
+  .diff-body { max-height:260px; overflow:auto; background:#1a1a1a; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; line-height:1.45; }
+  .diff-body div { padding:0 6px; white-space:pre-wrap; word-break:break-word; }
+  .diff-add { background:#123d1c; color:#9ff0b0; }
+  .diff-del { background:#4a1620; color:#ffb3bf; }
+  .diff-ctx { color:#888; }
+  .diff-skip { color:#666; font-style:italic; background:#242424; }
+  .diff-actions { display:flex; gap:6px; padding:6px 8px; background:#2f2f30; }
+  .diff-actions button { flex:1; background:#333; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px; }
+  .diff-actions .apply { background:var(--accent); color:#111; border-color:var(--accent); font-weight:600; }
+  #chat-log .cursor { color:var(--accent); animation:blink 1s steps(2,start) infinite; }
+  @keyframes blink { to { visibility:hidden; } }
+  #chat-log .thinking { margin:2px 0 6px; border-left:2px solid #555; padding-left:7px; }
+  #chat-log .thinking summary { cursor:pointer; font-size:11px; color:#888; text-transform:uppercase; letter-spacing:.03em; }
+  #chat-log .thinking summary:hover { color:var(--accent); }
+  #chat-log .thinking div { font-size:11.5px; color:#9a9a9a; white-space:pre-wrap; margin-top:4px; max-height:220px; overflow:auto; }
+  .diff-actions button:hover { filter:brightness(1.15); }
   #chat-input-wrap { display:flex; padding:8px; border-top:1px solid var(--border); gap:6px; }
   #chat-input { flex:1; background:#1a1a1a; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px; font-size:13px; resize:none; }
   #login-overlay { position:fixed; inset:0; background:#111; display:flex; align-items:center; justify-content:center; z-index:100; }
   #login-overlay input { padding:8px; font-size:14px; border-radius:4px; border:1px solid var(--border); background:#222; color:var(--text); }
   #login-overlay button { padding:8px 16px; margin-left:6px; }
+
+  /* ---- mobile ------------------------------------------------------------
+     Sidebar becomes a hidden drawer, AI becomes a bottom sheet, tools stay on
+     top. Widths use !important because the desktop resizers write inline
+     styles that would otherwise win. */
+  #menu-btn, #tree-backdrop { display:none; }
+
+  @media (max-width: 820px) {
+    #menu-btn { display:inline-block; }
+
+    #tree-panel {
+      position:fixed; top:0; left:0; bottom:0; z-index:60;
+      width:min(80vw, 320px) !important;
+      transform:translateX(-100%);
+      transition:transform .22s ease;
+      box-shadow:2px 0 12px rgba(0,0,0,.5);
+    }
+    #tree-panel.open { transform:translateX(0); }
+
+    #tree-backdrop.show { display:block; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:55; }
+
+    .resizer { display:none !important; }
+
+    #main { min-width:0; width:100%; }
+
+    /* AI panel docks to the bottom instead of the right */
+    #chat-panel {
+      position:fixed; left:0; right:0; bottom:0; z-index:50;
+      width:100% !important; height:min(50vh, 420px);
+      border-left:none; border-top:2px solid var(--accent);
+      padding-bottom:env(safe-area-inset-bottom);
+    }
+    #chat-panel.show { display:flex; }
+
+    /* keep the editor clear of the bottom sheet */
+    body.chat-open #main { padding-bottom:min(50vh, 420px); }
+
+    #toolbar { gap:5px; padding:5px 7px; flex-wrap:nowrap; overflow-x:auto; }
+    #toolbar button { padding:5px 8px; font-size:12px; flex-shrink:0; }
+    #toolbar #path { font-size:11px; min-width:60px; }
+    #logout-btn { flex-shrink:0; }
+
+    .editor-toolbar { flex-wrap:wrap; }
+    .EasyMDEContainer .CodeMirror { font-size:16px; }  /* 16px stops iOS zoom-on-focus */
+    #preview { padding:14px 16px; }
+    #find-input { font-size:16px; }
+  }
 
   @media print {
     body * { visibility:hidden; }
@@ -125,6 +192,7 @@
 </div>
 
 <div id="app">
+  <div id="tree-backdrop"></div>
   <div id="tree-panel">
     <h3>GSI Notes</h3>
     <div class="tree-actions">
@@ -140,6 +208,7 @@
 
   <div id="main">
     <div id="toolbar">
+      <button id="menu-btn" title="Files">☰</button>
       <button id="tab-edit" class="tab active">Edit</button>
       <button id="tab-preview" class="tab">Preview</button>
       <span id="path">No file open</span>
@@ -327,7 +396,7 @@ async function loadTree() {
     activate: (e) => {
       if (!e || !e.node) return;
       selectedNode = e.node;
-      if (!isFolderNode(e.node)) openFile(e.node.key);
+      if (!isFolderNode(e.node)) { openFile(e.node.key); closeDrawerOnMobile(); }
     },
   });
 }
@@ -492,9 +561,32 @@ function deleteTreeSelection() {
 }
 
 function toggleChat() {
-  document.getElementById('chat-panel').classList.toggle('show');
-  document.getElementById('resizer-right').classList.toggle('show');
+  const open = document.getElementById('chat-panel').classList.toggle('show');
+  document.getElementById('resizer-right').classList.toggle('show', open);
+  // On mobile the chat is a bottom sheet; pad the editor so it isn't covered.
+  document.body.classList.toggle('chat-open', open);
+  if (open) setTimeout(() => cm && cm.refresh(), 250);
 }
+
+// ---- mobile drawer ----------------------------------------------------------
+function isMobile() { return window.matchMedia('(max-width: 820px)').matches; }
+
+function setDrawer(open) {
+  document.getElementById('tree-panel').classList.toggle('open', open);
+  document.getElementById('tree-backdrop').classList.toggle('show', open);
+}
+
+document.getElementById('menu-btn').onclick = () =>
+  setDrawer(!document.getElementById('tree-panel').classList.contains('open'));
+document.getElementById('tree-backdrop').onclick = () => setDrawer(false);
+
+// Opening a file from the drawer should get out of the way on a phone.
+function closeDrawerOnMobile() { if (isMobile()) setDrawer(false); }
+
+window.addEventListener('resize', () => {
+  if (!isMobile()) setDrawer(false);   // leaving mobile: drop drawer state
+  if (cm) cm.refresh();
+});
 
 function targetDir() {
   if (!selectedNode) return null;
@@ -621,25 +713,77 @@ document.getElementById('chat-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
 
+// Split any <think>…</think> out of a reply so it can be shown collapsed.
+// Models that reason inline (like the current 14B) simply won't have any.
+function splitThinking(text) {
+  let thinking = '';
+  let body = text.replace(/<think>([\s\S]*?)<\/think>/gi, (_, t) => { thinking += t; return ''; });
+  const open = body.search(/<think>/i);
+  if (open !== -1) { thinking += body.slice(open + 7); body = body.slice(0, open); }
+  return { thinking: thinking.trim(), body: body.trim() };
+}
+
+let streaming = false;
+
 async function sendChat() {
+  if (streaming) return;
   const input = document.getElementById('chat-input');
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
   chatHistory.push({ role: 'user', content: text });
+
+  const msg = { role: 'assistant', content: '', reasoning: '', streaming: true };
+  chatHistory.push(msg);
+  streaming = true;
+  document.getElementById('chat-send').textContent = '…';
   renderChat();
-  const r = await api('/api/chat', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messages: chatHistory.filter(m => m.role !== 'system-note'),
-      file_content: cm ? cm.getValue() : null,
-      current_path: currentPath,
-    })
-  });
-  const data = await r.json();
-  chatHistory.push({ role: 'assistant', content: data.reply });
-  renderChat();
-  await applyActionIfAny(data.reply);
+
+  try {
+    const r = await api('/api/chat/stream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: chatHistory.filter(m => m.role === 'user' || (m.role === 'assistant' && !m.streaming))
+                             .map(m => ({ role: m.role, content: m.content })),
+        file_content: cm ? cm.getValue() : null,
+        current_path: currentPath,
+      })
+    });
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let lastPaint = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();                       // keep the partial line
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let obj;
+        try { obj = JSON.parse(line); } catch (e) { continue; }
+        if (obj.t === 'c') msg.content += obj.v;
+        else if (obj.t === 'r') msg.reasoning += obj.v;
+        else if (obj.t === 'e') msg.content += '\n\n_(stream error: ' + obj.v + ')_';
+      }
+      const now = Date.now();
+      if (now - lastPaint > 60) { renderChat(); lastPaint = now; }   // throttle repaints
+    }
+  } catch (err) {
+    msg.content += (msg.content ? '\n\n' : '') + '_(failed: ' + err.message + ')_';
+  } finally {
+    // Fold any inline <think> block out of the answer and into the collapsible part.
+    const split = splitThinking(msg.content);
+    if (split.thinking) { msg.reasoning = (msg.reasoning || '') + split.thinking; msg.content = split.body; }
+    msg.streaming = false;
+    streaming = false;
+    document.getElementById('chat-send').textContent = 'Send';
+    renderChat();
+  }
+
+  await applyActionIfAny(msg.content);
 }
 
 function extractAction(text) {
@@ -675,17 +819,62 @@ async function undoAiEdit(path, previousContent) {
   appendSystemNote('Reverted ' + path + ' to the pre-AI version.');
 }
 
+function buildDiffHtml(before, after) {
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  if (typeof Diff === 'undefined') return '<div class="diff-ctx">(diff library unavailable)</div>';
+  const parts = Diff.diffLines(before, after);
+  let added = 0, removed = 0, rows = [];
+  parts.forEach(part => {
+    const lines = part.value.replace(/\n$/, '').split('\n');
+    if (part.added) { added += lines.length; lines.forEach(l => rows.push(`<div class="diff-add">+ ${esc(l)}</div>`)); }
+    else if (part.removed) { removed += lines.length; lines.forEach(l => rows.push(`<div class="diff-del">- ${esc(l)}</div>`)); }
+    else if (lines.length > 6) {
+      // collapse long unchanged runs to keep the diff readable
+      lines.slice(0, 2).forEach(l => rows.push(`<div class="diff-ctx">  ${esc(l)}</div>`));
+      rows.push(`<div class="diff-skip">  … ${lines.length - 4} unchanged lines …</div>`);
+      lines.slice(-2).forEach(l => rows.push(`<div class="diff-ctx">  ${esc(l)}</div>`));
+    } else {
+      lines.forEach(l => rows.push(`<div class="diff-ctx">  ${esc(l)}</div>`));
+    }
+  });
+  return { html: rows.join(''), added, removed };
+}
+
+let pendingEdit = null;
+
+function appendDiffProposal(path, before, after) {
+  const d = buildDiffHtml(before, after);
+  pendingEdit = { path, before, after };
+  chatHistory.push({ role: 'diff', path, added: d.added, removed: d.removed, html: d.html });
+  renderChat();
+}
+
+async function applyPendingEdit() {
+  if (!pendingEdit) return;
+  const { path, before, after } = pendingEdit;
+  pendingEdit = null;
+  if (currentPath !== path) await openFile(path);
+  cm.setValue(after);
+  await saveFile();
+  chatHistory = chatHistory.filter(m => m.role !== 'diff');
+  appendSystemNote('Applied changes to ' + path + '.', { path, content: before });
+}
+
+function discardPendingEdit() {
+  pendingEdit = null;
+  chatHistory = chatHistory.filter(m => m.role !== 'diff');
+  appendSystemNote('Discarded the proposed changes — the document is unchanged.');
+}
+
 async function applyActionIfAny(reply) {
   const action = extractAction(reply);
   if (!action) return;
   try {
     if (action.action === 'edit') {
       if (!currentPath) { appendSystemNote('No file is open, so there was nothing to edit.'); return; }
-      const before = lastSavedContent;
-      const path = currentPath;
-      cm.setValue(action.content);
-      await saveFile();
-      appendSystemNote('Updated ' + path + '.', { path, content: before });
+      if (action.content === cm.getValue()) { appendSystemNote('The AI proposed no actual change.'); return; }
+      // Don't touch the document yet — show the diff and let the user decide.
+      appendDiffProposal(currentPath, cm.getValue(), action.content);
     } else if (action.action === 'create') {
       if (!action.path) { appendSystemNote('The AI tried to create a file but did not give it a path.'); return; }
       await api('/api/newfile', {
@@ -704,6 +893,14 @@ async function applyActionIfAny(reply) {
 function renderChat() {
   const log = document.getElementById('chat-log');
   log.innerHTML = chatHistory.map((m, i) => {
+    if (m.role === 'diff') {
+      return `<div class="msg"><div class="diff-box">
+        <div class="diff-head"><span>Proposed changes — ${m.path.replace(/</g, '&lt;')}</span>
+        <span><span class="diff-add">+${m.added}</span> <span class="diff-del">−${m.removed}</span></span></div>
+        <div class="diff-body">${m.html}</div>
+        <div class="diff-actions"><button class="apply" id="diff-apply">Apply</button><button id="diff-discard">Discard</button></div>
+      </div></div>`;
+    }
     if (m.role === 'system-note') {
       const undoBtn = m.undo ? ` <button class="undo-btn" data-idx="${i}">undo</button>` : '';
       return `<div class="msg"><div class="note">${m.content.replace(/</g, '&lt;')}${undoBtn}</div></div>`;
@@ -711,13 +908,26 @@ function renderChat() {
     if (m.role === 'user') {
       return `<div class="msg"><div class="role">user</div><div class="user">${m.content.replace(/</g, '&lt;')}</div></div>`;
     }
-    const action = extractAction(m.content);
+    const action = m.streaming ? null : extractAction(m.content);
     let body;
-    if (action && action.action === 'edit') body = '<em>Proposed an edit to the open document.</em>';
+    if (action && action.action === 'edit') body = '<em>Proposed an edit — see the diff below.</em>';
     else if (action && action.action === 'create') body = '<em>Proposed creating ' + (action.path || '').replace(/</g, '&lt;') + '</em>';
+    else if (m.streaming && !m.content && m.reasoning) body = '<em>thinking…</em>';
+    else if (m.streaming) body = renderMarkdown(m.content) + '<span class="cursor">▋</span>';
     else body = renderMarkdown(m.content);
-    return `<div class="msg"><div class="role">assistant</div><div class="assistant">${body}</div></div>`;
+
+    let think = '';
+    if (m.reasoning && m.reasoning.trim()) {
+      const open = m.streaming ? ' open' : '';
+      think = `<details class="thinking"${open}><summary>Thinking</summary><div>${
+        m.reasoning.replace(/</g, '&lt;')}</div></details>`;
+    }
+    return `<div class="msg"><div class="role">assistant</div>${think}<div class="assistant">${body}</div></div>`;
   }).join('');
+  const applyBtn = log.querySelector('#diff-apply');
+  if (applyBtn) applyBtn.onclick = () => applyPendingEdit();
+  const discardBtn = log.querySelector('#diff-discard');
+  if (discardBtn) discardBtn.onclick = () => discardPendingEdit();
   log.querySelectorAll('.undo-btn').forEach(btn => {
     btn.onclick = () => {
       const u = chatHistory[parseInt(btn.dataset.idx, 10)].undo;

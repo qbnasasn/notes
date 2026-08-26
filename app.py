@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -11,7 +12,7 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
 
@@ -291,10 +292,7 @@ Use these exact shapes:
 Only use the "edit" or "create" JSON action when the user is clearly asking you to write, rewrite, clean up, format, or create a document. When you do use it, output ONLY that JSON object and nothing else - it will be applied automatically, so any extra text would corrupt the document."""
 
 
-@app.post("/api/chat")
-async def chat(request: Request):
-    require_session(request)
-    body = await request.json()
+def build_messages(body: dict) -> list:
     messages = body.get("messages", [])
     file_content = body.get("file_content")
     current_path = body.get("current_path")
@@ -303,7 +301,52 @@ async def chat(request: Request):
         context += f"\n\nThe user currently has this document open: {current_path}"
     if file_content:
         context += f"\n\nIts current content:\n\n{file_content}"
-    messages = [{"role": "system", "content": context}] + messages
+    return [{"role": "system", "content": context}] + messages
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: Request):
+    """Proxy the upstream SSE stream as NDJSON.
+
+    Each line is {"t": "c"|"r", "v": "..."} — content vs reasoning. Reasoning is
+    kept separate (rather than dropped) so the UI can show it in a collapsible
+    block; models that don't produce it simply never emit "r" lines.
+    """
+    require_session(request)
+    body = await request.json()
+    messages = build_messages(body)
+
+    async def gen():
+        payload = {"model": AI_MODEL, "messages": messages, "stream": True}
+        try:
+            async with httpx.AsyncClient(timeout=300) as client:
+                async with client.stream("POST", AI_UPSTREAM, json=payload) as r:
+                    r.raise_for_status()
+                    async for line in r.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        chunk = line[5:].strip()
+                        if not chunk or chunk == "[DONE]":
+                            continue
+                        try:
+                            delta = json.loads(chunk)["choices"][0].get("delta", {}) or {}
+                        except Exception:
+                            continue
+                        if delta.get("reasoning_content"):
+                            yield json.dumps({"t": "r", "v": delta["reasoning_content"]}) + "\n"
+                        if delta.get("content"):
+                            yield json.dumps({"t": "c", "v": delta["content"]}) + "\n"
+        except Exception as e:
+            yield json.dumps({"t": "e", "v": f"{type(e).__name__}: {e}"}) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+@app.post("/api/chat")
+async def chat(request: Request):
+    require_session(request)
+    body = await request.json()
+    messages = build_messages(body)
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(AI_UPSTREAM, json={"model": AI_MODEL, "messages": messages, "stream": False})
         r.raise_for_status()

@@ -27,6 +27,15 @@ Custom FastAPI + vanilla JS notes app: file tree (Wunderbaum) + markdown editor 
 - **AI undo.** `applyActionIfAny` snapshots `lastSavedContent` before an edit and attaches it to the chat note; `undoAiEdit()` restores it.
 - **Tree expansion** is captured (`wbTree.root.visit`) and restored around `wbTree.load()`.
 
+## Mobile / diff / streaming (2026-08-26)
+- **The `viewport` meta tag was missing.** Without it mobile browsers lay out at ~980px and zoom out; no amount of CSS fixes that. It's the first thing to check if mobile ever looks wrong again.
+- **Mobile breakpoint is 820px.** Tree becomes a fixed drawer (`transform: translateX(-100%)`, `.open` slides it in) with a backdrop; chat becomes a bottom sheet. Widths use `!important` because the desktop resizers write **inline** `style.width`, which would otherwise beat the media query. `body.chat-open` pads `#main` so the sheet doesn't cover the editor. Editor font is bumped to 16px on mobile — iOS auto-zooms on focus for anything smaller.
+- **AI edits are now proposed, not applied.** `applyActionIfAny` builds a diff (jsdiff `diffLines`) and pushes a `role: 'diff'` entry into `chatHistory`; `pendingEdit` holds the payload until Apply/Discard. Only Apply touches the file. Runs of >6 unchanged lines are collapsed.
+- **Streaming**: `POST /api/chat/stream` proxies the upstream SSE as **NDJSON**, one `{"t":"c"|"r"|"e","v":…}` per line — `c` = content, `r` = reasoning, `e` = error. The frontend accumulates, repaints at most every 60ms, and runs `applyActionIfAny` on the completed text.
+- **Reasoning display works but is currently dormant.** DeepSeek-R1-Distill-14B on Stratum does **not** emit `<think>` blocks or `reasoning_content` — it reasons inline in prose. The collapsible block and `splitThinking()` handle both shapes and will light up automatically with a model that does emit them (e.g. qwen36-spec on 18099).
+- Stratum's stream opens with a handful of **empty-content chunks** before real tokens. Don't conclude streaming is broken from the first few frames — check the whole stream.
+- Testing gotcha: `let` bindings at script top level are **not** on `window`, so `page.evaluate("window.streaming")` is always undefined. Use the bare identifier.
+
 ## Known limitations / not yet done
 - Single shared password, no real multi-user accounts (tracked, not urgent per user)
 - Auto-save runs on a 15s interval, not truly instant
