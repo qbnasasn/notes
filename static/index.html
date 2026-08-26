@@ -1,0 +1,790 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GSI Notes</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
+<script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/wunderbaum@0/dist/wunderbaum.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/wunderbaum@0/dist/wunderbaum.umd.min.js"></script>
+<style>
+  :root { --bg:#1e1e1e; --panel:#252526; --border:#3a3a3a; --text:#ddd; --accent:#4ea1ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); height:100vh; overflow:hidden; }
+  #app { display:flex; height:100vh; }
+  #tree-panel { width:260px; background:var(--panel); border-right:1px solid var(--border); padding:8px; flex-shrink:0; display:flex; flex-direction:column; overflow:hidden; }
+  .resizer { width:5px; flex-shrink:0; cursor:col-resize; background:var(--border); }
+  .resizer:hover, .resizer.dragging { background:var(--accent); }
+  #resizer-right { display:none; }
+  #resizer-right.show { display:block; }
+  #tree-panel h3 { font-size:12px; text-transform:uppercase; color:#888; margin:4px 0 8px; flex-shrink:0; }
+  .tree-actions { flex-shrink:0; }
+  .tree-actions button { font-size:11px; margin-right:4px; margin-bottom:8px; }
+  #root-dropzone { flex-shrink:0; font-size:11px; color:#888; border:1px dashed var(--border); border-radius:4px; padding:5px 8px; margin-bottom:6px; text-align:center; }
+  #root-dropzone.drag-over { color:var(--accent); border-color:var(--accent); background:rgba(78,161,255,0.15); }
+  #tree-root {
+    flex:1;
+    min-height:0;
+    font-size:13px;
+    border:none !important;
+    border-radius:0 !important;
+    overflow-y:auto !important;
+    --wb-background-color: transparent;
+    --wb-node-text-color: var(--text);
+    --wb-border-color: var(--border);
+    --wb-grid-color: var(--border);
+    --wb-header-color: var(--panel);
+    --wb-alternate-row-color: #2a2a2b;
+    --wb-alternate-row-color-hover: #333333;
+    --wb-hover-color: #333333;
+    --wb-hover-border-color: #333333;
+    --wb-active-color: var(--accent);
+    --wb-active-hover-color: #3d8ce0;
+    --wb-active-border-color: var(--accent);
+    --wb-active-hover-border-color: var(--accent);
+    --wb-active-cell-color: var(--accent);
+    --wb-focus-border-color: var(--accent);
+    --wb-drop-target-color: rgba(78,161,255,0.35);
+    --wb-drop-source-color: #444444;
+    --wb-dim-color: #888888;
+  }
+  #tree-root .wb-row.wb-active, #tree-root .wb-row.wb-selected { color:#111; }
+  #main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #toolbar { display:flex; align-items:center; gap:8px; padding:6px 10px; background:var(--panel); border-bottom:1px solid var(--border); }
+  #toolbar #path { font-size:13px; color:#aaa; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #toolbar button, #chat button, .tree-actions button { background:#333; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 10px; cursor:pointer; font-size:12px; }
+  #toolbar button.active, .tab.active { background:var(--accent); color:#111; border-color:var(--accent); }
+  #find-bar { display:none; align-items:center; gap:6px; padding:5px 10px; background:var(--panel); border-bottom:1px solid var(--border); }
+  #find-bar.show { display:flex; }
+  #find-input { flex:1; max-width:340px; background:#1a1a1a; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px; font-size:13px; }
+  #find-input:focus { outline:none; border-color:var(--accent); }
+  #find-count { font-size:12px; color:#888; min-width:70px; }
+  #find-bar button { background:#333; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 9px; cursor:pointer; font-size:12px; }
+  #find-bar button:hover { border-color:var(--accent); }
+  .cm-gsi-find { background:#5c4a00; }
+  .cm-gsi-find-current { background:var(--accent); color:#111; }
+  #editor-area { flex:1; display:flex; min-height:0; }
+  #editor-wrap { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .EasyMDEContainer { flex:1; display:flex; flex-direction:column; min-height:0; }
+  .EasyMDEContainer .CodeMirror { flex:1; height:auto; font-size:14px; background:var(--bg); color:var(--text); border:none; }
+  .EasyMDEContainer .CodeMirror-cursor { border-left-color:var(--text); }
+  .EasyMDEContainer .CodeMirror-selected { background:#3a5578; }
+  .EasyMDEContainer .cm-s-easymde .cm-header { color:#8fc9ff; }
+  .EasyMDEContainer .cm-s-easymde .cm-link, .EasyMDEContainer .cm-s-easymde .cm-url { color:#4ea1ff; }
+  .EasyMDEContainer .cm-s-easymde .cm-quote { color:#7fd88f; }
+  .editor-toolbar { background:var(--panel); border:none; border-bottom:1px solid var(--border); opacity:1; }
+  .editor-toolbar button { color:var(--text) !important; border:none; }
+  .editor-toolbar button:hover, .editor-toolbar button.active { background:#333; border-color:var(--border); }
+  .editor-toolbar i.separator { border-left-color:var(--border); border-right-color:var(--border); }
+  .editor-statusbar { display:none; }
+  #preview { flex:1; overflow-y:auto; padding:24px 32px; display:none; }
+  #preview.show { display:block; }
+  #editor-wrap.hide { display:none; }
+  #chat-panel { width:320px; background:var(--panel); border-left:1px solid var(--border); display:none; flex-direction:column; flex-shrink:0; }
+  #chat-panel.show { display:flex; }
+  #chat-log { flex:1; overflow-y:auto; padding:10px; font-size:13px; }
+  #chat-log .msg { margin-bottom:10px; }
+  #chat-log .user { color:var(--accent); white-space:pre-wrap; }
+  #chat-log .role { font-size:10px; text-transform:uppercase; color:#888; }
+  #chat-log .note { font-size:12px; font-style:italic; color:#7fd88f; padding:4px 0; }
+  #chat-log .undo-btn { background:#333; color:var(--text); border:1px solid var(--border); border-radius:3px; font-size:11px; padding:1px 6px; cursor:pointer; font-style:normal; margin-left:4px; }
+  #chat-log .undo-btn:hover { border-color:var(--accent); color:var(--accent); }
+  #chat-log .assistant { overflow-wrap:break-word; }
+  #chat-log .assistant :is(h1,h2,h3,h4,h5,h6) { font-size:1em; margin:0.6em 0 0.3em; color:#8fc9ff; }
+  #chat-log .assistant p { margin:0.4em 0; }
+  #chat-log .assistant ul, #chat-log .assistant ol { margin:0.3em 0; padding-left:1.4em; }
+  #chat-log .assistant code { background:#1a1a1a; padding:1px 4px; border-radius:3px; font-size:0.9em; }
+  #chat-log .assistant pre { background:#1a1a1a; padding:6px; border-radius:4px; overflow-x:auto; }
+  #chat-log .assistant pre code { background:none; padding:0; }
+  #chat-log .assistant em { font-style:italic; color:#aaa; }
+  #chat-input-wrap { display:flex; padding:8px; border-top:1px solid var(--border); gap:6px; }
+  #chat-input { flex:1; background:#1a1a1a; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px; font-size:13px; resize:none; }
+  #login-overlay { position:fixed; inset:0; background:#111; display:flex; align-items:center; justify-content:center; z-index:100; }
+  #login-overlay input { padding:8px; font-size:14px; border-radius:4px; border:1px solid var(--border); background:#222; color:var(--text); }
+  #login-overlay button { padding:8px 16px; margin-left:6px; }
+
+  @media print {
+    body * { visibility:hidden; }
+    #preview, #preview * { visibility:visible; }
+    #preview { position:absolute; top:0; left:0; width:100%; height:auto; overflow:visible; padding:0; color:#000; background:#fff; }
+    #preview a { color:#000; }
+  }
+</style>
+</head>
+<body>
+
+<div id="login-overlay">
+  <form id="login-form" autocomplete="on" style="display:flex; flex-direction:column; gap:8px;">
+    <input type="text" id="login-username" name="username" placeholder="Username" autocomplete="username" value="admin">
+    <input type="password" id="login-password" name="password" placeholder="Password" autocomplete="current-password" autofocus>
+    <button type="submit">Enter</button>
+  </form>
+</div>
+
+<div id="app">
+  <div id="tree-panel">
+    <h3>GSI Notes</h3>
+    <div class="tree-actions">
+      <button id="new-file-btn">+ File</button>
+      <button id="new-folder-btn">+ Folder</button>
+      <button id="tree-delete-btn" title="Delete the item selected in the tree">🗑</button>
+    </div>
+    <div id="root-dropzone">⌂ Drop here to move to root</div>
+    <div id="tree-root"></div>
+  </div>
+
+  <div id="resizer-left" class="resizer"></div>
+
+  <div id="main">
+    <div id="toolbar">
+      <button id="tab-edit" class="tab active">Edit</button>
+      <button id="tab-preview" class="tab">Preview</button>
+      <span id="path">No file open</span>
+      <button id="find-btn" title="Find in this document (Ctrl+F)">🔍 Find</button>
+      <button id="print-btn" style="display:none;">🖨 Print</button>
+      <button id="logout-btn" title="Log out">Log out</button>
+    </div>
+    <div id="find-bar">
+      <input id="find-input" type="text" placeholder="Find in document…" autocomplete="off">
+      <span id="find-count"></span>
+      <button id="find-prev" title="Previous (Shift+Enter)">▲</button>
+      <button id="find-next" title="Next (Enter)">▼</button>
+      <button id="find-close" title="Close (Esc)">✕</button>
+    </div>
+    <div id="editor-area">
+      <div id="editor-wrap"><textarea id="editor-textarea"></textarea></div>
+      <div id="preview"></div>
+    </div>
+  </div>
+
+  <div id="resizer-right" class="resizer"></div>
+
+  <div id="chat-panel">
+    <div id="chat-log"></div>
+    <div id="chat-input-wrap">
+      <textarea id="chat-input" rows="2" placeholder="Ask about this file..."></textarea>
+      <button id="chat-send">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentPath = null;
+let cm = null;
+let easyMDE = null;
+
+function initEditor() {
+  easyMDE = new EasyMDE({
+    element: document.getElementById('editor-textarea'),
+    autoDownloadFontAwesome: true,
+    spellChecker: false,
+    status: false,
+    lineWrapping: true,
+    toolbar: [
+      'bold', 'italic', 'strikethrough', 'heading', '|',
+      'quote', 'unordered-list', 'ordered-list', '|',
+      'link', 'image', 'table', '|',
+      'code', 'horizontal-rule', '|',
+      'undo', 'redo', '|',
+      { name: 'save', action: () => saveFile(), className: 'fa fa-save', title: 'Save' },
+      { name: 'delete', action: () => deleteOpenFile(), className: 'fa fa-trash', title: 'Delete the open file' },
+      { name: 'ai', action: () => toggleChat(), className: 'fa fa-comments', title: 'AI Assistant' },
+    ],
+  });
+  cm = easyMDE.codemirror;
+  cm.on('change', () => updatePathLabel());
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, credentials: 'same-origin' });
+  if (r.status === 401) { showLogin(); throw new Error('unauthorized'); }
+  if (!r.ok) {
+    const text = await r.text();
+    let detail = text;
+    try { detail = JSON.parse(text).detail ?? text; } catch (e) { /* plain text */ }
+    const err = new Error(typeof detail === 'string' ? detail : text);
+    err.status = r.status;
+    throw err;
+  }
+  return r;
+}
+
+function showLogin() { document.getElementById('login-overlay').style.display = 'flex'; }
+function hideLogin() { document.getElementById('login-overlay').style.display = 'none'; }
+
+document.getElementById('login-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const username = document.getElementById('login-username').value;
+  const password = document.getElementById('login-password').value;
+  const r = await fetch('/api/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }), credentials: 'same-origin'
+  });
+  if (r.ok) { hideLogin(); loadTree().then(restoreLastFile); } else { alert('Wrong password'); }
+};
+
+let wbTree = null;
+let selectedNode = null;
+let draggedNode = null;
+
+function toWbNodes(nodes) {
+  return nodes.map(n => ({
+    title: n.name,
+    key: n.path,
+    folder: n.type === 'dir',
+    icon: n.type === 'dir' ? undefined : 'bi bi-file-earmark-text',
+    children: n.type === 'dir' ? toWbNodes(n.children || []) : undefined,
+  }));
+}
+
+function dirOf(path) {
+  const i = path.lastIndexOf('/');
+  return i === -1 ? null : path.slice(0, i);
+}
+
+async function createFileIn(dirPath) {
+  const name = prompt('New file name (inside ' + (dirPath || 'root') + '):');
+  if (!name) return;
+  const path = dirPath ? dirPath + '/' + name : name;
+  await api('/api/newfile', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, content: '# ' + name.replace(/\.md$/, '') + '\n\n' })
+  });
+  await loadTree();
+  openFile(path);
+}
+
+async function createFolderIn(dirPath) {
+  const name = prompt('New folder name (inside ' + (dirPath || 'root') + '):');
+  if (!name) return;
+  const path = dirPath ? dirPath + '/' + name : name;
+  await api('/api/mkdir', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path })
+  });
+  await loadTree();
+}
+
+async function movePath(from, to) {
+  await api('/api/move', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from, to })
+  });
+}
+
+function isFolderNode(node) {
+  return !!(node.data && node.data.folder);
+}
+
+async function loadTree() {
+  const r = await api('/api/tree');
+  const source = toWbNodes(await r.json());
+  if (wbTree) {
+    // Preserve which folders were open across a reload.
+    const expanded = [];
+    wbTree.root.visit(n => { if (n.isExpanded()) expanded.push(n.key); });
+    const activeKey = selectedNode ? selectedNode.key : null;
+    await wbTree.load(source);
+    for (const key of expanded) {
+      const n = wbTree.findKey(key);
+      if (n) await n.setExpanded(true);
+    }
+    if (activeKey) {
+      const n = wbTree.findKey(activeKey);
+      if (n) { selectedNode = n; }
+    }
+    return;
+  }
+  wbTree = new mar10.Wunderbaum({
+    element: document.getElementById('tree-root'),
+    source,
+    dnd: {
+      dragStart: (e) => { draggedNode = e.node; return true; },
+      dragEnter: (e) => isFolderNode(e.node) ? 'over' : false,
+      drop: async (e) => {
+        const from = e.sourceNode.key;
+        const to = e.node.key + '/' + e.sourceNode.title;
+        try {
+          await movePath(from, to);
+          await loadTree();
+        } catch (err) { alert('Move failed: ' + err.message); }
+      },
+    },
+    edit: {
+      trigger: ['F2'],
+      apply: async (e) => {
+        const parent = dirOf(e.node.key);
+        const to = parent ? parent + '/' + e.newValue : e.newValue;
+        try {
+          await movePath(e.node.key, to);
+          await loadTree();
+        } catch (err) { alert('Rename failed: ' + err.message); }
+      },
+    },
+    activate: (e) => {
+      if (!e || !e.node) return;
+      selectedNode = e.node;
+      if (!isFolderNode(e.node)) openFile(e.node.key);
+    },
+  });
+}
+
+let lastSavedContent = '';
+let currentMtime = null;
+let conflictOpen = false;
+
+function isDirty() {
+  return !!currentPath && !!cm && cm.getValue() !== lastSavedContent;
+}
+
+async function openFile(path) {
+  if (isDirty() && path !== currentPath) {
+    const save = confirm(
+      '"' + currentPath + '" has unsaved changes.\n\n' +
+      'OK = save it, then open ' + path + '\n' +
+      'Cancel = discard those changes and open ' + path
+    );
+    if (save) {
+      await saveFile();
+      if (isDirty()) return; // save failed or hit a conflict — stay put
+    }
+  }
+  let data;
+  try {
+    const r = await api('/api/file?path=' + encodeURIComponent(path));
+    data = await r.json();
+  } catch (err) {
+    if (err.status === 415) {
+      currentPath = null;
+      currentMtime = null;
+      lastSavedContent = '';
+      cm.setValue('');
+      document.getElementById('path').textContent = path + ' — binary file, not editable here';
+      document.getElementById('preview').innerHTML =
+        '<p style="color:#e0a"><strong>' + path.replace(/</g, '&lt;') + '</strong> is a binary file ' +
+        '(PDF, image, archive…). It is left untouched on disk — this editor would corrupt it.</p>';
+      return;
+    }
+    throw err;
+  }
+  currentPath = path;
+  currentMtime = data.mtime;
+  cm.setValue(data.content);
+  lastSavedContent = data.content;
+  try { localStorage.setItem('gsinotes-last-file', path); } catch (e) { /* private mode */ }
+  updatePathLabel();
+  updatePreview();
+}
+
+// Reopen whatever was last being worked on, if it still exists.
+async function restoreLastFile() {
+  let last;
+  try { last = localStorage.getItem('gsinotes-last-file'); } catch (e) { return; }
+  if (!last) return;
+  try {
+    await openFile(last);
+    const node = wbTree && wbTree.findKey(last);
+    if (node) { node.setActive(true); node.makeVisible(); }
+  } catch (e) {
+    try { localStorage.removeItem('gsinotes-last-file'); } catch (e2) { /* ignore */ }
+  }
+}
+
+function updatePathLabel() {
+  if (!currentPath) { document.getElementById('path').textContent = 'No file open'; return; }
+  document.getElementById('path').textContent = currentPath + (isDirty() ? ' ● unsaved' : '');
+}
+
+async function reloadFromDisk() {
+  const r = await api('/api/file?path=' + encodeURIComponent(currentPath));
+  const data = await r.json();
+  currentMtime = data.mtime;
+  cm.setValue(data.content);
+  lastSavedContent = data.content;
+  updatePathLabel();
+  updatePreview();
+}
+
+async function handleConflict() {
+  if (conflictOpen) return;
+  conflictOpen = true;
+  try {
+    const overwrite = confirm(
+      '"' + currentPath + '" changed on disk since you opened it.\n' +
+      '(another tab, an AI agent, or an editor wrote to it)\n\n' +
+      'OK = keep MY version and overwrite what is on disk\n' +
+      'Cancel = discard my changes and reload the version from disk\n\n' +
+      'Either way the previous content stays in git history.'
+    );
+    if (overwrite) {
+      await saveFile({ force: true });
+    } else {
+      await reloadFromDisk();
+    }
+  } finally {
+    conflictOpen = false;
+  }
+}
+
+async function saveFile(opts = {}) {
+  if (!currentPath) return;
+  const content = cm.getValue();
+  let url = '/api/file?path=' + encodeURIComponent(currentPath);
+  if (currentMtime !== null && !opts.force) url += '&mtime=' + currentMtime;
+  try {
+    const r = await api(url, { method: 'PUT', body: content });
+    const data = await r.json();
+    currentMtime = data.mtime;
+    lastSavedContent = content;
+    document.getElementById('path').textContent = currentPath + ' (saved)';
+    setTimeout(updatePathLabel, 1000);
+  } catch (err) {
+    if (err.status === 409) { await handleConflict(); return; }
+    document.getElementById('path').textContent = currentPath + ' — SAVE FAILED: ' + err.message;
+  }
+}
+
+setInterval(() => {
+  if (isDirty() && !conflictOpen) saveFile();
+}, 15000);
+
+window.addEventListener('beforeunload', (e) => {
+  if (isDirty()) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+async function deletePath(target, isFolder) {
+  if (!target) return;
+  const warning = isFolder
+    ? 'Delete the FOLDER "' + target + '" and everything inside it?'
+    : 'Delete the file "' + target + '"?';
+  if (!confirm(warning + '\n\n(recoverable from git history)')) return;
+  await api('/api/path?path=' + encodeURIComponent(target), { method: 'DELETE' });
+  if (target === currentPath || (isFolder && currentPath && currentPath.startsWith(target + '/'))) {
+    currentPath = null;
+    currentMtime = null;
+    cm.setValue('');
+    lastSavedContent = '';
+    updatePathLabel();
+    updatePreview();
+  }
+  if (selectedNode && (selectedNode.key === target || selectedNode.key.startsWith(target + '/'))) {
+    selectedNode = null;
+  }
+  loadTree();
+}
+
+// Editor toolbar: always acts on the file open in the editor.
+function deleteOpenFile() {
+  if (!currentPath) { alert('No file is open.'); return; }
+  return deletePath(currentPath, false);
+}
+
+// Tree panel: acts on whatever is selected in the tree.
+function deleteTreeSelection() {
+  if (!selectedNode) { alert('Select a file or folder in the tree first.'); return; }
+  return deletePath(selectedNode.key, isFolderNode(selectedNode));
+}
+
+function toggleChat() {
+  document.getElementById('chat-panel').classList.toggle('show');
+  document.getElementById('resizer-right').classList.toggle('show');
+}
+
+function targetDir() {
+  if (!selectedNode) return null;
+  return isFolderNode(selectedNode) ? selectedNode.key : dirOf(selectedNode.key);
+}
+
+document.getElementById('new-file-btn').onclick = () => createFileIn(targetDir());
+document.getElementById('new-folder-btn').onclick = () => createFolderIn(targetDir());
+document.getElementById('tree-delete-btn').onclick = () => deleteTreeSelection();
+
+// Markdown may legally contain raw HTML. Both the preview and the AI chat log are
+// injected with innerHTML, so anything unsanitised would execute inside the logged-in
+// session (and could hit the file API). DOMPurify strips scripts/handlers first.
+function renderMarkdown(src) {
+  const html = marked.parse(src || '');
+  return (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(html) : html;
+}
+
+// ---- find in document -------------------------------------------------------
+let findMarks = [];
+let findHits = [];
+let findIdx = -1;
+
+function clearFindMarks() {
+  findMarks.forEach(m => m.clear());
+  findMarks = [];
+}
+
+function runFind(term) {
+  clearFindMarks();
+  findHits = [];
+  findIdx = -1;
+  if (!term) { document.getElementById('find-count').textContent = ''; return; }
+  const cursor = cm.getSearchCursor(term, null, { caseFold: true });
+  while (cursor.findNext()) {
+    findHits.push({ from: cursor.from(), to: cursor.to() });
+    if (findHits.length > 2000) break;
+  }
+  findHits.forEach(h => findMarks.push(cm.markText(h.from, h.to, { className: 'cm-gsi-find' })));
+  document.getElementById('find-count').textContent = findHits.length ? `1/${findHits.length}` : 'no matches';
+  if (findHits.length) gotoHit(0);
+}
+
+function gotoHit(i) {
+  if (!findHits.length) return;
+  findIdx = (i + findHits.length) % findHits.length;
+  const h = findHits[findIdx];
+  cm.setSelection(h.from, h.to);
+  cm.scrollIntoView({ from: h.from, to: h.to }, 80);
+  document.getElementById('find-count').textContent = `${findIdx + 1}/${findHits.length}`;
+}
+
+function openFind() {
+  document.getElementById('tab-edit').click();     // find only makes sense in Edit view
+  document.getElementById('find-bar').classList.add('show');
+  const input = document.getElementById('find-input');
+  const sel = cm.getSelection();
+  if (sel && !sel.includes('\n')) input.value = sel;
+  input.focus();
+  input.select();
+  runFind(input.value);
+}
+
+function closeFind() {
+  document.getElementById('find-bar').classList.remove('show');
+  clearFindMarks();
+  findHits = [];
+  findIdx = -1;
+  cm.focus();
+}
+
+document.getElementById('find-btn').onclick = openFind;
+document.getElementById('find-close').onclick = closeFind;
+document.getElementById('find-next').onclick = () => gotoHit(findIdx + 1);
+document.getElementById('find-prev').onclick = () => gotoHit(findIdx - 1);
+document.getElementById('find-input').addEventListener('input', (e) => runFind(e.target.value));
+document.getElementById('find-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); gotoHit(findIdx + (e.shiftKey ? -1 : 1)); }
+  if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); openFind(); }
+  if (e.key === 'Escape' && document.getElementById('find-bar').classList.contains('show')) closeFind();
+});
+
+// ---- logout -----------------------------------------------------------------
+document.getElementById('logout-btn').onclick = async () => {
+  if (isDirty() && !confirm('You have unsaved changes. Log out anyway?')) return;
+  try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) { /* clear UI regardless */ }
+  currentPath = null; currentMtime = null; lastSavedContent = '';
+  cm.setValue('');
+  localStorage.removeItem('gsinotes-last-file');
+  chatHistory = [];
+  renderChat();
+  updatePathLabel();
+  showLogin();
+};
+
+function updatePreview() {
+  document.getElementById('preview').innerHTML = renderMarkdown(cm.getValue());
+}
+
+document.getElementById('tab-edit').onclick = () => {
+  document.getElementById('tab-edit').classList.add('active');
+  document.getElementById('tab-preview').classList.remove('active');
+  document.getElementById('editor-wrap').classList.remove('hide');
+  document.getElementById('preview').classList.remove('show');
+  document.getElementById('print-btn').style.display = 'none';
+};
+document.getElementById('tab-preview').onclick = () => {
+  updatePreview();
+  document.getElementById('tab-preview').classList.add('active');
+  document.getElementById('tab-edit').classList.remove('active');
+  document.getElementById('editor-wrap').classList.add('hide');
+  document.getElementById('preview').classList.add('show');
+  document.getElementById('print-btn').style.display = 'inline-block';
+};
+document.getElementById('print-btn').onclick = () => window.print();
+
+
+let chatHistory = [];
+document.getElementById('chat-send').onclick = sendChat;
+document.getElementById('chat-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  chatHistory.push({ role: 'user', content: text });
+  renderChat();
+  const r = await api('/api/chat', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: chatHistory.filter(m => m.role !== 'system-note'),
+      file_content: cm ? cm.getValue() : null,
+      current_path: currentPath,
+    })
+  });
+  const data = await r.json();
+  chatHistory.push({ role: 'assistant', content: data.reply });
+  renderChat();
+  await applyActionIfAny(data.reply);
+}
+
+function extractAction(text) {
+  const trimmed = (text || '').trim();
+  const candidates = [trimmed];
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) candidates.push(fenceMatch[1].trim());
+  const first = trimmed.indexOf('{');
+  const last = trimmed.lastIndexOf('}');
+  if (first !== -1 && last > first) candidates.push(trimmed.slice(first, last + 1));
+
+  for (const candidate of candidates) {
+    try {
+      const obj = JSON.parse(candidate);
+      if (obj && (obj.action === 'edit' || obj.action === 'create') && typeof obj.content === 'string') {
+        return obj;
+      }
+    } catch (e) { /* try next candidate */ }
+  }
+  return null;
+}
+
+function appendSystemNote(text, undo) {
+  chatHistory.push({ role: 'system-note', content: text, undo });
+  renderChat();
+}
+
+async function undoAiEdit(path, previousContent) {
+  if (!confirm('Restore "' + path + '" to what it was before the AI edited it?')) return;
+  if (currentPath !== path) await openFile(path);
+  cm.setValue(previousContent);
+  await saveFile();
+  appendSystemNote('Reverted ' + path + ' to the pre-AI version.');
+}
+
+async function applyActionIfAny(reply) {
+  const action = extractAction(reply);
+  if (!action) return;
+  try {
+    if (action.action === 'edit') {
+      if (!currentPath) { appendSystemNote('No file is open, so there was nothing to edit.'); return; }
+      const before = lastSavedContent;
+      const path = currentPath;
+      cm.setValue(action.content);
+      await saveFile();
+      appendSystemNote('Updated ' + path + '.', { path, content: before });
+    } else if (action.action === 'create') {
+      if (!action.path) { appendSystemNote('The AI tried to create a file but did not give it a path.'); return; }
+      await api('/api/newfile', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: action.path, content: action.content })
+      });
+      await loadTree();
+      openFile(action.path);
+      appendSystemNote('Created ' + action.path + '.');
+    }
+  } catch (err) {
+    appendSystemNote('Failed to apply the change: ' + err.message);
+  }
+}
+
+function renderChat() {
+  const log = document.getElementById('chat-log');
+  log.innerHTML = chatHistory.map((m, i) => {
+    if (m.role === 'system-note') {
+      const undoBtn = m.undo ? ` <button class="undo-btn" data-idx="${i}">undo</button>` : '';
+      return `<div class="msg"><div class="note">${m.content.replace(/</g, '&lt;')}${undoBtn}</div></div>`;
+    }
+    if (m.role === 'user') {
+      return `<div class="msg"><div class="role">user</div><div class="user">${m.content.replace(/</g, '&lt;')}</div></div>`;
+    }
+    const action = extractAction(m.content);
+    let body;
+    if (action && action.action === 'edit') body = '<em>Proposed an edit to the open document.</em>';
+    else if (action && action.action === 'create') body = '<em>Proposed creating ' + (action.path || '').replace(/</g, '&lt;') + '</em>';
+    else body = renderMarkdown(m.content);
+    return `<div class="msg"><div class="role">assistant</div><div class="assistant">${body}</div></div>`;
+  }).join('');
+  log.querySelectorAll('.undo-btn').forEach(btn => {
+    btn.onclick = () => {
+      const u = chatHistory[parseInt(btn.dataset.idx, 10)].undo;
+      undoAiEdit(u.path, u.content);
+    };
+  });
+  log.scrollTop = log.scrollHeight;
+}
+
+function makeResizer(resizerEl, panelEl, { minWidth, maxWidth, growsLeft, storageKey }) {
+  const saved = localStorage.getItem(storageKey);
+  if (saved) panelEl.style.width = saved + 'px';
+
+  resizerEl.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = panelEl.getBoundingClientRect().width;
+    resizerEl.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(e) {
+      const dx = e.clientX - startX;
+      let newWidth = startWidth + (growsLeft ? -dx : dx);
+      newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+      panelEl.style.width = newWidth + 'px';
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      resizerEl.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      localStorage.setItem(storageKey, parseInt(panelEl.style.width, 10));
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+makeResizer(document.getElementById('resizer-left'), document.getElementById('tree-panel'),
+  { minWidth: 160, maxWidth: 600, growsLeft: false, storageKey: 'gsinotes-tree-width' });
+makeResizer(document.getElementById('resizer-right'), document.getElementById('chat-panel'),
+  { minWidth: 220, maxWidth: 700, growsLeft: true, storageKey: 'gsinotes-chat-width' });
+
+const rootDropzone = document.getElementById('root-dropzone');
+rootDropzone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  rootDropzone.classList.add('drag-over');
+});
+rootDropzone.addEventListener('dragleave', () => rootDropzone.classList.remove('drag-over'));
+rootDropzone.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  rootDropzone.classList.remove('drag-over');
+  if (!draggedNode) return;
+  const to = draggedNode.title;
+  const from = draggedNode.key;
+  draggedNode = null;
+  if (dirOf(from) === null) return; // already at root
+  try {
+    await movePath(from, to);
+    await loadTree();
+  } catch (err) { alert('Move failed: ' + err.message); }
+});
+
+initEditor();
+loadTree().then(restoreLastFile).catch(() => showLogin());
+</script>
+</body>
+</html>

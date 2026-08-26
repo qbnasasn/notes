@@ -1,0 +1,8 @@
+# Secrets — never commit
+.env
+
+# Local content lives outside this repo (mounted from machine_vault/)
+content/
+
+__pycache__/
+*.pyc

@@ -1,0 +1,16 @@
+services:
+  gsi-notes:
+    build: .
+    container_name: gsi-notes
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file:
+      - .env
+    environment:
+      - CONTENT_ROOT=/content
+      - AI_UPSTREAM=http://172.17.0.1:11435/v1/chat/completions
+      - AI_MODEL=DeepSeek-R1-Distill-Qwen-14B-Q4_0
+    volumes:
+      - /home/qbnasasn/machine_vault:/content
+    ports:
+      - "3737:8000"
