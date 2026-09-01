@@ -198,6 +198,7 @@
     <div class="tree-actions">
       <button id="new-file-btn">+ File</button>
       <button id="new-folder-btn">+ Folder</button>
+      <button id="tree-rename-btn" title="Rename the item selected in the tree (or press F2)">✏️ Rename</button>
       <button id="tree-delete-btn" title="Delete the item selected in the tree">🗑</button>
     </div>
     <div id="root-dropzone">⌂ Drop here to move to root</div>
@@ -344,6 +345,51 @@ async function movePath(from, to) {
   });
 }
 
+// Rename a file or folder, keeping the editor pointed at the open document if it
+// (or a folder above it) was the thing renamed. Without this, currentPath would
+// still hold the old name and the next save would recreate a file under it.
+async function performRename(oldPath, newName) {
+  newName = (newName || '').trim();
+  const base = oldPath.split('/').pop();
+  if (!newName || newName === base) return;
+  if (newName.includes('/')) { alert('A name cannot contain "/" — drag the item to move it instead.'); return; }
+
+  const parent = dirOf(oldPath);
+  const to = parent ? parent + '/' + newName : newName;
+  try {
+    await movePath(oldPath, to);
+  } catch (err) {
+    alert('Rename failed: ' + err.message);
+    return;
+  }
+
+  let moved = null;
+  if (currentPath === oldPath) moved = to;
+  else if (currentPath && currentPath.startsWith(oldPath + '/')) moved = to + currentPath.slice(oldPath.length);
+  if (moved) {
+    currentPath = moved;
+    try { localStorage.setItem('gsinotes-last-file', moved); } catch (e) { /* private mode */ }
+    try {
+      const r = await api('/api/file?path=' + encodeURIComponent(moved));
+      currentMtime = (await r.json()).mtime;   // path changed, so the version tag did too
+    } catch (e) { /* keep editing; next save will surface any problem */ }
+    updatePathLabel();
+  }
+
+  await loadTree();
+  const node = wbTree && wbTree.findKey(to);
+  if (node) { selectedNode = node; node.setActive(true); node.makeVisible(); }
+}
+
+function renameSelected() {
+  if (!selectedNode) { alert('Select a file or folder in the tree first.'); return; }
+  const oldPath = selectedNode.key;
+  const base = oldPath.split('/').pop();
+  const name = prompt('Rename "' + base + '" to:', base);
+  if (name === null) return;
+  performRename(oldPath, name);
+}
+
 function isFolderNode(node) {
   return !!(node.data && node.data.folder);
 }
@@ -384,13 +430,11 @@ async function loadTree() {
     },
     edit: {
       trigger: ['F2'],
-      apply: async (e) => {
-        const parent = dirOf(e.node.key);
-        const to = parent ? parent + '/' + e.newValue : e.newValue;
-        try {
-          await movePath(e.node.key, to);
-          await loadTree();
-        } catch (err) { alert('Rename failed: ' + err.message); }
+      apply: (e) => {
+        const oldPath = e.node.key, newName = e.newValue;
+        // Deferred: reloading the tree from inside the edit lifecycle destroys the
+        // node Wunderbaum is still finishing with, which throws on its next update.
+        setTimeout(() => performRename(oldPath, newName), 0);
       },
     },
     activate: (e) => {
@@ -595,6 +639,7 @@ function targetDir() {
 
 document.getElementById('new-file-btn').onclick = () => createFileIn(targetDir());
 document.getElementById('new-folder-btn').onclick = () => createFolderIn(targetDir());
+document.getElementById('tree-rename-btn').onclick = () => renameSelected();
 document.getElementById('tree-delete-btn').onclick = () => deleteTreeSelection();
 
 // Markdown may legally contain raw HTML. Both the preview and the AI chat log are

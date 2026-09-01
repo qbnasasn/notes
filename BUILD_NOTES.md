@@ -36,6 +36,11 @@ Custom FastAPI + vanilla JS notes app: file tree (Wunderbaum) + markdown editor 
 - Stratum's stream opens with a handful of **empty-content chunks** before real tokens. Don't conclude streaming is broken from the first few frames — check the whole stream.
 - Testing gotcha: `let` bindings at script top level are **not** on `window`, so `page.evaluate("window.streaming")` is always undefined. Use the bare identifier.
 
+## Rename (2026-09-01)
+Rename always existed (F2 on a tree node) but was invisible — and unreachable on mobile, which has no F2 key. Added a **✏️ Rename** button to the tree actions; both paths now share `performRename()`, which fixed two real bugs found while testing:
+- **Renaming the open document left `currentPath` on the old name.** The next save then *recreated a file under the old filename* (the write path creates missing files, and the conflict check doesn't fire when nothing is there). `performRename` now follows the open file — including when a folder above it is renamed — and refreshes its version tag, since the path change invalidates it.
+- **`loadTree()` was called from inside Wunderbaum's `edit.apply`**, destroying the node it was still finishing with; it threw `Cannot read properties of null (reading 'options'/'update')` on every F2 rename. The reload is now deferred with `setTimeout(…, 0)` so the edit lifecycle completes first.
+
 ## Known limitations / not yet done
 - Single shared password, no real multi-user accounts (tracked, not urgent per user)
 - Auto-save runs on a 15s interval, not truly instant
