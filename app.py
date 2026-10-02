@@ -1,14 +1,10 @@
-import base64
-import hashlib
-import hmac
 import json
 import os
 import re
-import secrets
 import shutil
 import subprocess
 import tempfile
-import time
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -16,14 +12,19 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
 
+import auth
+
 CONTENT_ROOT = Path(os.environ.get("CONTENT_ROOT", "/content")).resolve()
-APP_PASSWORD = os.environ["APP_PASSWORD"]
-SECRET_KEY = os.environ["SECRET_KEY"].encode()
-SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 AI_UPSTREAM = os.environ.get("AI_UPSTREAM", "http://172.17.0.1:11435/v1/chat/completions")
 AI_MODEL = os.environ.get("AI_MODEL", "DeepSeek-R1-Distill-Qwen-14B-Q4_0")
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+def _open_pool():
+    auth.pool.open()
+    auth.pool.wait(timeout=10)
 
 
 def safe_path(rel: str) -> Path:
@@ -34,29 +35,27 @@ def safe_path(rel: str) -> Path:
     return p
 
 
-def make_session_token() -> str:
-    payload = f"admin:{int(time.time()) + SESSION_MAX_AGE}"
-    sig = hmac.new(SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()
-    return base64.urlsafe_b64encode(payload.encode()).decode() + "." + sig
-
-
-def verify_session_token(token: str) -> bool:
-    try:
-        payload_b64, sig = token.split(".", 1)
-        payload = base64.urlsafe_b64decode(payload_b64.encode()).decode()
-        expected_sig = hmac.new(SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected_sig):
-            return False
-        _, expiry = payload.rsplit(":", 1)
-        return int(expiry) > int(time.time())
-    except Exception:
-        return False
-
-
-def require_session(request: Request):
-    token = request.cookies.get("session")
-    if not token or not verify_session_token(token):
+def require_session(request: Request) -> auth.User:
+    """Authenticate the request and return the user making it."""
+    user = auth.get_user_for_token(request.cookies.get("session") or "")
+    if not user:
         raise HTTPException(401, "unauthorized")
+    return user
+
+
+def require_admin(request: Request) -> auth.User:
+    user = require_session(request)
+    if not user.is_admin:
+        raise HTTPException(403, "admin only")
+    return user
+
+
+def client_ip(request: Request) -> str:
+    # Behind Cloudflare the real client is in CF-Connecting-IP; direct LAN hits
+    # fall back to the socket address.
+    return (request.headers.get("cf-connecting-ip")
+            or (request.headers.get("x-forwarded-for", "").split(",")[0].strip())
+            or (request.client.host if request.client else "unknown"))
 
 
 BINARY_EXTENSIONS = {
@@ -121,32 +120,49 @@ def atomic_write(p: Path, text: str) -> None:
         raise
 
 
-def git_commit(rel_path: str, message: str | None = None):
+_git_lock = threading.Lock()
+
+
+def git_commit(rel_path: str, message: str | None = None, user: "auth.User | None" = None):
+    """Commit a change, attributed to whoever made it.
+
+    Serialised with a process-wide lock: `git add` + `commit` is not atomic, and
+    two concurrent saves would collide on .git/index.lock. With one user that
+    never happened; with several it would silently drop commits, since failures
+    here are deliberately swallowed so a git problem can't block a save.
+    """
+    paths = [rel_path] if isinstance(rel_path, str) else list(rel_path)
     base = ["git", "-c", f"safe.directory={CONTENT_ROOT}"]
-    try:
-        subprocess.run(base + ["add", "-A", "--", rel_path], cwd=CONTENT_ROOT, check=False, capture_output=True)
-        subprocess.run(
-            base + ["commit", "-m", message or f"edit: {rel_path}"],
-            cwd=CONTENT_ROOT, check=False, capture_output=True,
-        )
-    except Exception:
-        pass
+    if user:
+        base += ["-c", f"user.name={user.display_name or user.email}",
+                 "-c", f"user.email={user.email}"]
+    with _git_lock:
+        try:
+            subprocess.run(base + ["add", "-A", "--"] + paths,
+                           cwd=CONTENT_ROOT, check=False, capture_output=True)
+            subprocess.run(base + ["commit", "-m", message or f"edit: {paths[0]}"],
+                           cwd=CONTENT_ROOT, check=False, capture_output=True)
+        except Exception:
+            pass
 
 
 @app.post("/api/login")
 async def login(request: Request, response: Response):
     body = await request.json()
-    if not secrets.compare_digest(body.get("password", ""), APP_PASSWORD):
-        raise HTTPException(401, "wrong password")
-    token = make_session_token()
-    response = JSONResponse({"ok": True})
+    user, result = auth.authenticate(
+        body.get("username", ""), body.get("password", ""), client_ip(request)
+    )
+    if not user:
+        raise HTTPException(401, result)
+    token = auth.make_session_token(user.id, result)   # result is token_version here
+    response = JSONResponse({"ok": True, "email": user.email, "is_admin": user.is_admin})
     # `secure` is decided per-request, not hardcoded: Cloudflare terminates TLS and
     # sets X-Forwarded-Proto, but the LAN URL (http://10.0.0.10:3737) is plain HTTP.
     # Hardcoding secure=True would make LAN login silently impossible.
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     response.set_cookie(
         "session", token,
-        httponly=True, samesite="lax", max_age=SESSION_MAX_AGE,
+        httponly=True, samesite="lax", max_age=auth.SESSION_MAX_AGE,
         secure=(proto == "https"),
     )
     return response
@@ -157,6 +173,64 @@ def logout():
     response = JSONResponse({"ok": True})
     response.delete_cookie("session")
     return response
+
+
+@app.get("/api/me")
+def whoami(request: Request):
+    user = require_session(request)
+    return {"email": user.email, "display_name": user.display_name, "is_admin": user.is_admin}
+
+
+# ------------------------------------------------------------ user management
+
+@app.get("/api/users")
+def api_list_users(request: Request):
+    require_admin(request)
+    return auth.list_users()
+
+
+@app.post("/api/users")
+async def api_create_user(request: Request):
+    require_admin(request)
+    body = await request.json()
+    email = (body.get("email") or "").strip()
+    password = body.get("password") or ""
+    if "@" not in email:
+        raise HTTPException(400, "a valid email address is required")
+    if len(password) < 10:
+        raise HTTPException(400, "password must be at least 10 characters")
+    try:
+        uid = auth.create_user(email, password, body.get("display_name", ""), bool(body.get("is_admin")))
+    except Exception as e:
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            raise HTTPException(400, "that email already has an account")
+        raise
+    return {"ok": True, "id": uid}
+
+
+@app.post("/api/users/{user_id}/password")
+async def api_set_password(user_id: int, request: Request):
+    """Admins may reset anyone; everyone may change their own."""
+    me = require_session(request)
+    if not me.is_admin and me.id != user_id:
+        raise HTTPException(403, "you can only change your own password")
+    body = await request.json()
+    password = body.get("password") or ""
+    if len(password) < 10:
+        raise HTTPException(400, "password must be at least 10 characters")
+    auth.set_password(user_id, password)
+    return {"ok": True, "note": "existing sessions for that account were signed out"}
+
+
+@app.post("/api/users/{user_id}/active")
+async def api_set_active(user_id: int, request: Request):
+    me = require_admin(request)
+    body = await request.json()
+    active = bool(body.get("active"))
+    if not active and me.id == user_id:
+        raise HTTPException(400, "you cannot disable your own account")
+    auth.set_active(user_id, active)
+    return {"ok": True}
 
 
 @app.get("/api/tree")
@@ -191,7 +265,7 @@ def read_file(path: str, request: Request):
 
 @app.put("/api/file")
 async def write_file(path: str, request: Request, mtime: str | None = None):
-    require_session(request)
+    user = require_session(request)
     p = safe_path(path)
     if p.exists():
         if not p.is_file():
@@ -203,7 +277,7 @@ async def write_file(path: str, request: Request, mtime: str | None = None):
             raise HTTPException(409, "file changed on disk since it was opened")
     body = await request.body()
     atomic_write(p, body.decode("utf-8"))
-    git_commit(path)
+    git_commit(path, user=user)
     return {"ok": True, "mtime": version_of(p)}
 
 
@@ -218,19 +292,19 @@ async def mkdir(request: Request):
 
 @app.post("/api/newfile")
 async def newfile(request: Request):
-    require_session(request)
+    user = require_session(request)
     body = await request.json()
     p = safe_path(body["path"])
     if p.exists():
         raise HTTPException(400, "already exists")
     atomic_write(p, body.get("content", ""))
-    git_commit(body["path"])
+    git_commit(body["path"], user=user)
     return {"ok": True, "mtime": version_of(p)}
 
 
 @app.delete("/api/path")
 def delete_path(path: str, request: Request):
-    require_session(request)
+    user = require_session(request)
     p = safe_path(path)
     if p == CONTENT_ROOT:
         raise HTTPException(400, "refusing to delete root")
@@ -240,13 +314,13 @@ def delete_path(path: str, request: Request):
         p.unlink()
     else:
         raise HTTPException(404, "not found")
-    git_commit(path, message=f"delete: {path}")
+    git_commit(path, message=f"delete: {path}", user=user)
     return {"ok": True}
 
 
 @app.post("/api/move")
 async def move_path(request: Request):
-    require_session(request)
+    user = require_session(request)
     body = await request.json()
     src = safe_path(body["from"])
     dst = safe_path(body["to"])
@@ -258,15 +332,8 @@ async def move_path(request: Request):
         raise HTTPException(400, "cannot move a folder into itself")
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dst))
-    base = ["git", "-c", f"safe.directory={CONTENT_ROOT}"]
-    try:
-        subprocess.run(base + ["add", "-A"], cwd=CONTENT_ROOT, check=False, capture_output=True)
-        subprocess.run(
-            base + ["commit", "-m", f"move: {body['from']} -> {body['to']}"],
-            cwd=CONTENT_ROOT, check=False, capture_output=True,
-        )
-    except Exception:
-        pass
+    git_commit([body["from"], body["to"]],
+               message=f"move: {body['from']} -> {body['to']}", user=user)
     return {"ok": True}
 
 

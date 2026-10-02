@@ -41,6 +41,21 @@ Rename always existed (F2 on a tree node) but was invisible — and unreachable 
 - **Renaming the open document left `currentPath` on the old name.** The next save then *recreated a file under the old filename* (the write path creates missing files, and the conflict check doesn't fire when nothing is there). `performRename` now follows the open file — including when a folder above it is renamed — and refreshes its version tag, since the path change invalidates it.
 - **`loadTree()` was called from inside Wunderbaum's `edit.apply`**, destroying the node it was still finishing with; it threw `Cannot read properties of null (reading 'options'/'update')` on every F2 rename. The reload is now deferred with `setTimeout(…, 0)` so the edit lifecycle completes first.
 
+## Postgres-backed accounts (2026-10-02)
+Replaced the single shared `APP_PASSWORD` with real user accounts. `auth.py` holds it all; `schema.sql` is idempotent.
+
+- **Its own database.** Users live in a dedicated `gsinotes` DB owned by `gsinotes_user`, *not* inside `openwebui` — that DB holds an account and chat history, and Open WebUI runs Alembic migrations over it.
+- **Argon2** password hashing (`argon2-cffi`), with rehash-on-login when parameters change. Unknown emails still spend hashing time so response timing doesn't reveal which accounts exist.
+- **Sessions stay stateless** (HMAC cookie) but now carry `user_id:token_version`. Bumping `token_version` invalidates every cookie for that user — that's how "disable account" and password changes sign people out immediately. Costs one indexed lookup per request over a local socket.
+- **Login throttling** via `login_attempts`: 8 failures per account and 20 per IP in a rolling 15 minutes. Counted separately on purpose — per-IP alone would let one attacker lock out everyone behind a shared NAT, per-account alone wouldn't slow a spray across many accounts.
+- **Git commits are attributed per user** via `-c user.name/user.email`.
+- **`git_commit` is now serialised with a process lock** and accepts multiple paths. `add`+`commit` isn't atomic; two concurrent saves collided on `.git/index.lock`, and because failures here are deliberately swallowed, commits vanished *silently*. Verified: 12 concurrent writes → 12 commits, nothing dropped.
+
+### Infrastructure gotchas
+- **Compose networks are not the default bridge.** The container sits on `172.23.x`, so the existing `host all all 172.17.0.0/16` pg_hba rule didn't match. Added `host gsinotes gsinotes_user 172.16.0.0/12` — scoped to one DB and one role, and stable if the compose network is recreated.
+- `sudo -S` reads its password from stdin, so a heredoc fed to `psql` silently steals it and the SQL never runs. Use `-f file` or `-c`.
+- pg_hba had dead rules for `n8n`/`n8n_vector_db` (databases that no longer exist); removed. A dated backup of the original sits next to it.
+
 ## Known limitations / not yet done
 - Single shared password, no real multi-user accounts (tracked, not urgent per user)
 - Auto-save runs on a 15s interval, not truly instant

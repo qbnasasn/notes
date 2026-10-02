@@ -125,6 +125,28 @@
   #login-overlay { position:fixed; inset:0; background:#111; display:flex; align-items:center; justify-content:center; z-index:100; }
   #login-overlay input { padding:8px; font-size:14px; border-radius:4px; border:1px solid var(--border); background:#222; color:var(--text); }
   #login-overlay button { padding:8px 16px; margin-left:6px; }
+  #login-error { color:#ff9aa8; font-size:12px; min-height:16px; max-width:260px; }
+  #user-chip { font-size:11px; color:#888; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #users-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:120; align-items:center; justify-content:center; }
+  #users-modal.show { display:flex; }
+  .users-box { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:16px; width:min(94vw,640px); max-height:86vh; overflow:auto; }
+  .users-box h3 { margin:0 0 10px; font-size:14px; }
+  .users-box h4 { margin:16px 0 6px; font-size:12px; color:#888; text-transform:uppercase; }
+  #users-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  #users-table td { padding:5px 6px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  #users-table .email { font-weight:600; }
+  #users-table .muted { color:#888; font-size:11px; }
+  #users-table button { font-size:11px; padding:2px 7px; margin-left:4px; background:#333; color:var(--text); border:1px solid var(--border); border-radius:3px; cursor:pointer; }
+  #users-table button:hover { border-color:var(--accent); }
+  .users-add { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .users-add input[type=email], .users-add input[type=text], .users-add input[type=password] {
+    background:#1a1a1a; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px 7px; font-size:12.5px; flex:1; min-width:130px; }
+  .users-add label { font-size:12px; color:#aaa; }
+  .users-add button, #users-close { background:#333; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px 12px; cursor:pointer; font-size:12px; }
+  #users-close { margin-top:14px; }
+  #users-msg { font-size:12px; margin-top:8px; min-height:16px; color:#7fd88f; }
+  #users-msg.err { color:#ff9aa8; }
+  .inactive { opacity:.5; }
 
   /* ---- mobile ------------------------------------------------------------
      Sidebar becomes a hidden drawer, AI becomes a bottom sheet, tools stay on
@@ -185,10 +207,28 @@
 
 <div id="login-overlay">
   <form id="login-form" autocomplete="on" style="display:flex; flex-direction:column; gap:8px;">
-    <input type="text" id="login-username" name="username" placeholder="Username" autocomplete="username" value="admin">
-    <input type="password" id="login-password" name="password" placeholder="Password" autocomplete="current-password" autofocus>
+    <input type="email" id="login-username" name="username" placeholder="Email" autocomplete="username" autofocus>
+    <input type="password" id="login-password" name="password" placeholder="Password" autocomplete="current-password">
     <button type="submit">Enter</button>
+    <div id="login-error"></div>
   </form>
+</div>
+
+<div id="users-modal">
+  <div class="users-box">
+    <h3>Users</h3>
+    <table id="users-table"><tbody></tbody></table>
+    <h4>Add a user</h4>
+    <div class="users-add">
+      <input id="nu-email" type="email" placeholder="email">
+      <input id="nu-name" type="text" placeholder="display name (optional)">
+      <input id="nu-pass" type="password" placeholder="password (10+ chars)">
+      <label><input id="nu-admin" type="checkbox"> admin</label>
+      <button id="nu-create">Create</button>
+    </div>
+    <div id="users-msg"></div>
+    <button id="users-close">Close</button>
+  </div>
 </div>
 
 <div id="app">
@@ -215,6 +255,8 @@
       <span id="path">No file open</span>
       <button id="find-btn" title="Find in this document (Ctrl+F)">🔍 Find</button>
       <button id="print-btn" style="display:none;">🖨 Print</button>
+      <span id="user-chip" title="Signed in as"></span>
+      <button id="users-btn" title="Manage users" style="display:none;">👥 Users</button>
       <button id="logout-btn" title="Log out">Log out</button>
     </div>
     <div id="find-bar">
@@ -293,8 +335,40 @@ document.getElementById('login-form').onsubmit = async (e) => {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }), credentials: 'same-origin'
   });
-  if (r.ok) { hideLogin(); loadTree().then(restoreLastFile); } else { alert('Wrong password'); }
+  const errBox = document.getElementById('login-error');
+  if (r.ok) {
+    errBox.textContent = '';
+    const me = await r.json().catch(() => ({}));
+    currentUser = { email: me.email, is_admin: me.is_admin };
+    updateUserChip();
+    hideLogin();
+    loadTree().then(restoreLastFile);
+  } else {
+    // Surface the real reason — wrong password vs. throttled vs. disabled.
+    let detail = 'Login failed';
+    try { detail = (await r.json()).detail || detail; } catch (e) { /* non-JSON */ }
+    errBox.textContent = detail;
+  }
 };
+
+let currentUser = null;
+
+function updateUserChip() {
+  const chip = document.getElementById('user-chip');
+  if (!chip) return;
+  chip.textContent = currentUser ? currentUser.email : '';
+  const btn = document.getElementById('users-btn');
+  if (btn) btn.style.display = (currentUser && currentUser.is_admin) ? 'inline-block' : 'none';
+}
+
+async function loadMe() {
+  try {
+    const r = await api('/api/me');
+    const me = await r.json();
+    currentUser = { email: me.email, is_admin: me.is_admin };
+    updateUserChip();
+  } catch (e) { /* not logged in yet */ }
+}
 
 let wbTree = null;
 let selectedNode = null;
@@ -717,6 +791,80 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.getElementById('find-bar').classList.contains('show')) closeFind();
 });
 
+// ---- user management (admin only) -------------------------------------------
+function usersMsg(text, isError) {
+  const el = document.getElementById('users-msg');
+  el.textContent = text || '';
+  el.classList.toggle('err', !!isError);
+}
+
+async function loadUsers() {
+  const tbody = document.querySelector('#users-table tbody');
+  let users;
+  try {
+    users = await (await api('/api/users')).json();
+  } catch (err) { usersMsg(err.message, true); return; }
+  tbody.innerHTML = users.map(u => `
+    <tr class="${u.is_active ? '' : 'inactive'}" data-id="${u.id}">
+      <td>
+        <div class="email">${u.email.replace(/</g,'&lt;')}${u.is_admin ? ' <span class="muted">admin</span>' : ''}</div>
+        <div class="muted">${u.last_login_at ? 'last login ' + new Date(u.last_login_at).toLocaleString() : 'never signed in'}</div>
+      </td>
+      <td style="text-align:right; white-space:nowrap;">
+        <button class="pw" data-id="${u.id}">Set password</button>
+        <button class="act" data-id="${u.id}" data-active="${u.is_active}">${u.is_active ? 'Disable' : 'Enable'}</button>
+      </td>
+    </tr>`).join('');
+
+  tbody.querySelectorAll('button.pw').forEach(b => b.onclick = async () => {
+    const pw = prompt('New password (10+ characters):');
+    if (!pw) return;
+    try {
+      const r = await api('/api/users/' + b.dataset.id + '/password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }) });
+      usersMsg((await r.json()).note || 'Password updated.');
+    } catch (err) { usersMsg(err.message, true); }
+  });
+
+  tbody.querySelectorAll('button.act').forEach(b => b.onclick = async () => {
+    const makeActive = b.dataset.active !== 'true';
+    try {
+      await api('/api/users/' + b.dataset.id + '/active', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: makeActive }) });
+      usersMsg(makeActive ? 'Account enabled.' : 'Account disabled and signed out.');
+      loadUsers();
+    } catch (err) { usersMsg(err.message, true); }
+  });
+}
+
+document.getElementById('users-btn').onclick = () => {
+  document.getElementById('users-modal').classList.add('show');
+  usersMsg('');
+  loadUsers();
+};
+document.getElementById('users-close').onclick = () =>
+  document.getElementById('users-modal').classList.remove('show');
+
+document.getElementById('nu-create').onclick = async () => {
+  const email = document.getElementById('nu-email').value.trim();
+  const display_name = document.getElementById('nu-name').value.trim();
+  const password = document.getElementById('nu-pass').value;
+  const is_admin = document.getElementById('nu-admin').checked;
+  try {
+    await api('/api/users', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, display_name, is_admin }) });
+    usersMsg('Created ' + email + '.');
+    document.getElementById('nu-email').value = '';
+    document.getElementById('nu-name').value = '';
+    document.getElementById('nu-pass').value = '';
+    document.getElementById('nu-admin').checked = false;
+    loadUsers();
+  } catch (err) { usersMsg(err.message, true); }
+};
+
 // ---- logout -----------------------------------------------------------------
 document.getElementById('logout-btn').onclick = async () => {
   if (isDirty() && !confirm('You have unsaved changes. Log out anyway?')) return;
@@ -724,6 +872,8 @@ document.getElementById('logout-btn').onclick = async () => {
   currentPath = null; currentMtime = null; lastSavedContent = '';
   cm.setValue('');
   localStorage.removeItem('gsinotes-last-file');
+  currentUser = null;
+  updateUserChip();
   chatHistory = [];
   renderChat();
   updatePathLabel();
@@ -1039,6 +1189,7 @@ rootDropzone.addEventListener('drop', async (e) => {
 });
 
 initEditor();
+loadMe();
 loadTree().then(restoreLastFile).catch(() => showLogin());
 </script>
 </body>
